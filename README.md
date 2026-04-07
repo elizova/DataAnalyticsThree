@@ -20,46 +20,46 @@
 
 ### 1. Клонируйте репозиторий
 
-``bash
+```bash
 git clone https://github.com/elizova/DataAnalyticsThree.git
 cd ваш_репозиторий
-``
+```
 
 ### 2. Создайте виртуальное окружение
 
-``bash
+```bash
 python -m venv .venv
 source .venv/bin/activate      # Linux / macOS
 .venv\Scripts\activate          # Windows
-``
+```
 
 ### 3. Установите зависимости
 
-``bash
+```bash
 pip install -r requirements.txt
-``
+```
 
 ### 4. Настройте API‑ключ OpenRouter
 
 Замените `.streamlit.example/secrets.toml.example` на `.streamlit/secrets.toml` (в корне проекта) и добавьте в него:
 
-``toml
+```toml
 OPENROUTER_API_KEY = "sk-or-v1-ваш_ключ_с_openrouter"
-``
+```
 
 Ключ можно получить на [openrouter.ai/keys](https://openrouter.ai/keys). Бесплатная модель `openrouter/free` не требует оплаты.
 
 ### 5. Запустите приложение
 
-``bash
+```bash
 streamlit run app.py
-``
+```
 
 После этого откроется локальный адрес `http://localhost:8501`.
 
 ## 📂 Структура проекта
 
-``
+```
 .
 ├── app.py                 # Главный файл с интерфейсом Streamlit
 ├── utils.py               # Вспомогательные функции (LLM, графики, кодировки)
@@ -67,7 +67,7 @@ streamlit run app.py
 ├── README.md              # Этот файл
 └── .streamlit/
     └── secrets.toml       # Секретный ключ (не загружается в git)
-``    
+```    
 
 
 ## Пример входных данных
