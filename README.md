@@ -22,7 +22,6 @@
 
 ```bash
 git clone https://github.com/elizova/DataAnalyticsThree.git
-cd ваш_репозиторий
 ```
 
 ### 2. Создайте виртуальное окружение
