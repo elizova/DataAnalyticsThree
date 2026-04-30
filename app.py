@@ -1,18 +1,23 @@
-import matplotlib.pyplot as plt
 import pandas as pd
 import streamlit as st
 
-from utils import fig_to_base64, generate_plot, generate_summary, init_client
+from agent.client import get_client, init_client
+from agent.runner import run_agent
 
 if "client_initialized" not in st.session_state:
+    st.session_state.client_initialized = False
+
+if not st.session_state.client_initialized:
     init_client(st.secrets["OPENROUTER_API_KEY"])
     st.session_state.client_initialized = True
+else:
+    try:
+        get_client()
+    except RuntimeError:
+        init_client(st.secrets["OPENROUTER_API_KEY"])
 
 st.set_page_config(page_title="AI Аналитик", layout="wide")
-st.title("AI-аналитик данных")
-st.markdown(
-    "Загрузите несколько файлов, переключайтесь между ними и анализируйте."
-)
+st.title("AI аналитик данных")
 
 if "files_data" not in st.session_state:
     st.session_state.files_data = {}
@@ -20,129 +25,95 @@ if "current_file" not in st.session_state:
     st.session_state.current_file = None
 
 uploaded_file = st.file_uploader(
-    "Загрузите CSV или Excel", type=["csv", "xlsx"], key="file_uploader"
+    "Загрузите CSV или Excel", type=["csv", "xlsx"]
 )
-
 if uploaded_file is not None:
     file_name = uploaded_file.name
     if file_name not in st.session_state.files_data:
-        if file_name.endswith(".csv"):
-            encodings = [
-                "utf-8",
-                "cp1251",
-                "windows-1251",
-                "latin1",
-                "iso-8859-1",
-            ]
-            df = None
-            for enc in encodings:
-                try:
-                    uploaded_file.seek(0)
-                    df = pd.read_csv(uploaded_file, encoding=enc)
-                    break
-                except UnicodeDecodeError:
-                    continue
-            if df is None:
-                st.stop()
-        else:
-            df = pd.read_excel(uploaded_file)
-
+        try:
+            if file_name.endswith(".csv"):
+                encodings = [
+                    "utf-8",
+                    "cp1251",
+                    "windows-1251",
+                    "latin1",
+                    "iso-8859-1",
+                ]
+                df = None
+                for enc in encodings:
+                    try:
+                        uploaded_file.seek(0)
+                        df = pd.read_csv(uploaded_file, encoding=enc)
+                        break
+                    except UnicodeDecodeError:
+                        continue
+                if df is None:
+                    st.error("Неправильная кодировка")
+                    st.stop()
+            else:
+                df = pd.read_excel(uploaded_file)
+        except Exception as e:
+            st.error(f"Ошибка: {e}")
+            st.stop()
         st.session_state.files_data[file_name] = {
             "df": df,
-            "summary": None,
-            "fig_base64": None,
-            "chart_type": None,
-            "col_x": None,
-            "col_y": None,
-            "plot_generated": False,
+            "report": None,
+            "images": [],
+            "debug": "",
+            "analysis_done": False,
         }
         st.session_state.current_file = file_name
-        st.rerun()
 
 if st.session_state.files_data:
     file_names = list(st.session_state.files_data.keys())
     if st.session_state.current_file not in file_names:
         st.session_state.current_file = file_names[0]
     selected_file = st.selectbox(
-        "Выберите файл для анализа",
+        "Выберите файл",
         file_names,
         index=file_names.index(st.session_state.current_file),
+        key="file_selector",
     )
-    if selected_file != st.session_state.current_file:
-        st.session_state.current_file = selected_file
-        st.rerun()
+
+    st.session_state.current_file = selected_file
 else:
-    st.info("Загрузите файл, чтобы начать.")
+    st.info("Загрузите файл")
     st.stop()
 
 current = st.session_state.files_data[st.session_state.current_file]
 df = current["df"]
 
-st.subheader(f"Файл: {st.session_state.current_file}")
-st.subheader("Предпросмотр данных")
 st.dataframe(df.head())
 
-numeric_cols = df.select_dtypes(include="number").columns.tolist()
-if len(numeric_cols) == 0:
-    st.warning("Нет числовых колонок для графика.")
-    show_plot_controls = False
-else:
-    show_plot_controls = True
+user_instruction = st.text_area(
+    "Дополнительные инструкции (необязательно)", key="instr"
+)
 
-if show_plot_controls:
-    with st.expander(
-        "Настройки графика", expanded=not current["plot_generated"]
-    ):
-        chart_type = st.selectbox(
-            "Тип графика",
-            ["scatter plot", "line plot", "bar chart", "histogram"],
-            key=f"chart_type_{st.session_state.current_file}",
-        )
-        if chart_type == "histogram":
-            col_x = st.selectbox(
-                "Колонка для гистограммы",
-                numeric_cols,
-                key=f"col_x_{st.session_state.current_file}",
+if st.button("Запустить анализ", key="run"):
+    if df.empty:
+        st.error("Датасет пуст")
+    else:
+        with st.spinner("Агент проводит анализ.."):
+            try:
+                report, images, debug = run_agent(df, user_instruction)
+                current["report"] = report
+                current["images"] = images
+                current["debug"] = debug
+                current["analysis_done"] = True
+            except Exception as e:
+                st.error(f"Ошибка: {e}")
+                current["analysis_done"] = False
+
+if current.get("analysis_done"):
+    st.subheader("Отчёт")
+    st.markdown(current["report"])
+    if current["images"]:
+        st.subheader("Графики")
+        for idx, img in enumerate(current["images"]):
+            st.image(
+                f"data:image/png;base64,{img}",
+                caption=f"График {idx+1}",
+                use_container_width=True,
             )
-            col_y = None
-        else:
-            col_x = st.selectbox(
-                "Ось X",
-                numeric_cols,
-                key=f"col_x_{st.session_state.current_file}",
-            )
-            col_y = st.selectbox(
-                "Ось Y",
-                numeric_cols,
-                index=min(1, len(numeric_cols) - 1),
-                key=f"col_y_{st.session_state.current_file}",
-            )
-
-        if st.button(
-            "Сгенерировать аналитику и график",
-            key=f"gen_{st.session_state.current_file}",
-        ):
-            with st.spinner("Генерация аналитики..."):
-                summary = generate_summary(df)
-                current["summary"] = summary
-            with st.spinner("Генерация графика..."):
-                fig, err = generate_plot(df, chart_type, col_x, col_y)
-            if fig is not None:
-                fig_base64 = fig_to_base64(fig)
-                plt.close(fig)
-                current["fig_base64"] = fig_base64
-                current["chart_type"] = chart_type
-                current["col_x"] = col_x
-                current["col_y"] = col_y
-                current["plot_generated"] = True
-            else:
-                current["plot_generated"] = False
-                st.error(f"Не удалось сгенерировать график( {err}")
-
-if current["summary"] is not None:
-    st.subheader("AI-аналитика")
-    st.write(current["summary"])
-
-if current["plot_generated"] and current["fig_base64"] is not None:
-    st.subheader(f"График: {current['chart_type']}")
-    st.image(f"data:image/png;base64,{current['fig_base64']}")
+    with st.expander("Отладка"):
+        st.text(current.get("debug", "Нет данных"))
