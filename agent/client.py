@@ -1,13 +1,15 @@
-from openai import OpenAI
+from langchain_openai import ChatOpenAI
 
 _client = None
 
 
 def init_client(api_key: str):
     global _client
-    _client = OpenAI(
-        api_key=api_key,
-        base_url="https://openrouter.ai/api/v1",
+    _client = ChatOpenAI(
+        model="meta-llama/llama-3.3-70b-instruct",
+        openai_api_key=api_key,
+        openai_api_base="https://openrouter.ai/api/v1",
+        temperature=0.3,
     )
 
 
