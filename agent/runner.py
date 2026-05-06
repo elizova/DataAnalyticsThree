@@ -1,14 +1,15 @@
+import json
+import pandas as pd
 from langchain_core.messages import AIMessage, HumanMessage, SystemMessage
 from langchain_core.tools import StructuredTool
 from langgraph.prebuilt import create_react_agent
+
 from agent.client import get_client
-from agent.prompt import SYSTEM_PROMPT
+from agent.prompt import EXECUTOR_PROMPT, PLANNER_PROMPT, REPORTER_PROMPT
 from compression import compress_dataframe
 from executor import execute_python
 from plots import fallback_plots
 from utils.security import sanitize_instruction
-import json
-import pandas as pd
 
 _current_df: pd.DataFrame | None = None
 
@@ -32,47 +33,60 @@ run_python_tool = StructuredTool.from_function(
 )
 
 
-def run_agent(df: pd.DataFrame, user_instruction: str = "", model: str = None):
-    global _current_df
-    _current_df = df.copy()
+def plan_tasks(compressed: dict, instruction: str) -> list[str]:
+    llm = get_client()
+    prompt = f"""Датасет:
+    {json.dumps(compressed, ensure_ascii=False, indent=2)}
+    Дополнительные пожелания пользователя: {instruction or 'нет'}
+    Придумай список аналитических задач для этого датасета"""
 
-    compressed = compress_dataframe(df)
-    instruction = sanitize_instruction(user_instruction or "")
-
-    agent = create_react_agent(
-        model=get_client(),
-        tools=[run_python_tool],
+    response = llm.invoke(
+        [
+            SystemMessage(content=PLANNER_PROMPT),
+            HumanMessage(content=prompt),
+        ]
     )
 
-    dataset_info = f"""Датасет:
-    {json.dumps(compressed, ensure_ascii=False, indent=2)}
+    text = response.content.strip()
+    if text.startswith("```"):
+        text = text.split("```")[1]
+        if text.startswith("json"):
+            text = text[4:]
 
-    Инструкция пользователя:
-    {instruction}
+    try:
+        tasks = json.loads(text)
+        return tasks if isinstance(tasks, list) else []
+    except Exception:
+        return [
+            "Общая статистика и типы данных",
+            "Пропущенные значения и качество данных",
+            "Распределения числовых колонок",
+            "Корреляции между переменными",
+            "Выбросы в ключевых колонках",
+        ]
 
-    сначала вызови инструмент run_python с кодом анализа, затем напиши отчёт."""
+
+def execute_task(task: str, compressed: dict) -> tuple[str, list]:
+    llm = get_client()
+    agent = create_react_agent(model=llm, tools=[run_python_tool])
+
+    prompt = f"""Задача: {task}
+
+    Датасет:
+    {json.dumps(compressed, ensure_ascii=False, indent=2)}"""
 
     result = agent.invoke(
         {
             "messages": [
-                SystemMessage(content=SYSTEM_PROMPT),
-                HumanMessage(content=dataset_info),
+                SystemMessage(content=EXECUTOR_PROMPT),
+                HumanMessage(content=prompt),
             ]
         },
-        config={"recursion_limit": 15},
+        config={"recursion_limit": 25},
     )
 
-    for i, msg in enumerate(result["messages"]):
-        print(f"[{i}] {type(msg).__name__}: {repr(str(msg.content)[:120])}")
-
-    report = ""
-    for msg in reversed(result["messages"]):
-        if isinstance(msg, AIMessage) and msg.content and msg.content.strip():
-            report = msg.content
-            break
-
-    all_images = []
-    debug_lines = []
+    tool_output = ""
+    images = []
     for msg in result["messages"]:
         if (
             isinstance(msg, AIMessage)
@@ -81,12 +95,61 @@ def run_agent(df: pd.DataFrame, user_instruction: str = "", model: str = None):
         ):
             for tc in msg.tool_calls:
                 if tc["name"] == "run_python":
-                    code = tc["args"].get("code", "")
-                    exec_result = execute_python(code, _current_df)
-                    all_images.extend(exec_result.get("images", []))
-                    debug_lines.append(
-                        f"[run_python]\n{exec_result.get('text_output', '')}\n"
+                    exec_result = execute_python(
+                        tc["args"].get("code", ""), _current_df
                     )
+                    images.extend(exec_result.get("images", []))
+                    tool_output += exec_result.get("text_output", "")
+
+    return tool_output, images
+
+
+def generate_report(tasks_results: list[dict], compressed: dict) -> str:
+    llm = get_client()
+
+    results_text = ""
+    for i, item in enumerate(tasks_results, 1):
+        results_text += (
+            f"\n--- Задача {i}: {item['task']} ---\n{item['output']}\n"
+        )
+
+    prompt = f"""Датасет (краткая информация):
+    {json.dumps(compressed, ensure_ascii=False, indent=2)}
+
+    Результаты анализа по задачам:
+    {results_text}
+
+    Напиши финальный отчёт"""
+
+    response = llm.invoke(
+        [
+            SystemMessage(content=REPORTER_PROMPT),
+            HumanMessage(content=prompt),
+        ]
+    )
+    return response.content
+
+
+def run_agent(df: pd.DataFrame, user_instruction: str = "", model: str = None):
+    global _current_df
+    _current_df = df.copy()
+
+    compressed = compress_dataframe(df)
+    instruction = sanitize_instruction(user_instruction or "")
+
+    tasks = plan_tasks(compressed, instruction)
+
+    all_images = []
+    tasks_results = []
+    debug_lines = [f"Задачи: {json.dumps(tasks, ensure_ascii=False)}"]
+
+    for i, task in enumerate(tasks, 1):
+        output, images = execute_task(task, compressed)
+        all_images.extend(images)
+        tasks_results.append({"task": task, "output": output})
+        debug_lines.append(f"\n[Задача {i}: {task}]\n{output}")
+
+    report = generate_report(tasks_results, compressed)
 
     if not all_images:
         all_images = fallback_plots(df)

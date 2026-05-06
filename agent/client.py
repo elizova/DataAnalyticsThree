@@ -6,9 +6,9 @@ _client = None
 def init_client(api_key: str):
     global _client
     _client = ChatOpenAI(
-        model="meta-llama/llama-3.3-70b-instruct",
+        model="llama-3.1-8b-instant",  # model="llama-3.3-70b-versatile",
         openai_api_key=api_key,
-        openai_api_base="https://openrouter.ai/api/v1",
+        openai_api_base="https://api.groq.com/openai/v1",
         temperature=0.3,
     )
 

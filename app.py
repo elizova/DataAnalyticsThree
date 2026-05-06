@@ -8,13 +8,13 @@ if "client_initialized" not in st.session_state:
     st.session_state.client_initialized = False
 
 if not st.session_state.client_initialized:
-    init_client(st.secrets["OPENROUTER_API_KEY"])
+    init_client(st.secrets["GROQ_API_KEY"])
     st.session_state.client_initialized = True
 else:
     try:
         get_client()
     except RuntimeError:
-        init_client(st.secrets["OPENROUTER_API_KEY"])
+        init_client(st.secrets["GROQ_API_KEY"])
 
 st.set_page_config(page_title="AI Аналитик", layout="wide")
 st.title("AI аналитик данных")
